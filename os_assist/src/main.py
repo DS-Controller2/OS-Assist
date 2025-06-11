@@ -41,8 +41,8 @@ Available OS actions and their parameters:
 1.  `read_file`: Reads the content of a specified file.
     *   `parameters`: `{"filepath": "/path/to/file.txt"}`
 
-2.  `write_file`: Writes or overwrites content to a specified file. Parent directories will be created.
-    *   `parameters`: `{"filepath": "/path/to/file.txt", "content": "text to write"}`
+2.  `write_file`: Writes content to a specified file. Parent directories will be created.
+    *   `parameters`: `{"filepath": "/path/to/file.txt", "content": "text to write", "mode": "overwrite|append"}` (default mode is "overwrite" if not specified)
 
 3.  `run_command`: Executes a terminal command.
     *   `parameters`: `{"command_string": "ls -l /tmp"}`
@@ -105,173 +105,351 @@ LLM Response:
 ```
 """
 
-def _execute_os_action(action_name: str, params: dict) -> bool:
-    """
-    Helper function to execute a single OS-level action.
-    Returns True if successful, False otherwise.
-    """
+# --- Action Handler Functions ---
+
+def _handle_read_file(params: dict, **kwargs) -> bool: # kwargs for unused quick_action_manager
+    filepath = params.get("filepath")
+    if not filepath:
+        print("Error: 'filepath' not provided for read_file action.")
+        return False
     try:
-        if action_name == "read_file":
-            filepath = params.get("filepath")
-            if filepath:
-                content = os_operations.read_file(filepath)
-                print(f"--- File Content: {filepath} ---\n{content}\n-------------------------------")
-            else:
-                print("Error: 'filepath' not provided for read_file action.")
-                return False
-
-        elif action_name == "write_file":
-            filepath = params.get("filepath")
-            content = params.get("content") # Content can be None for empty file, but filepath must exist
-            if filepath is not None:
-                print(f"CONFIRM: About to write to file: '{filepath}'. This may overwrite existing content or create a new file.")
-                confirm_input = input("Are you sure? (yes/no): ").strip().lower()
-                if confirm_input == "yes":
-                    os_operations.write_file(filepath, content if content is not None else "")
-                    print(f"Successfully wrote to file: {filepath}")
-                else:
-                    print("Operation cancelled by user.")
-                    return False # Cancelled
-            else:
-                print("Error: 'filepath' not provided for write_file action.")
-                return False
-
-        elif action_name == "run_command":
-            command_string = params.get("command_string")
-            if command_string:
-                # Blacklist check
-                cleaned_command = command_string.strip()
-                for blocked_cmd_prefix in COMMAND_BLACKLIST:
-                    if cleaned_command.startswith(blocked_cmd_prefix):
-                        # Special handling for "rm -rf /" to avoid false positives on "rm -rf /some/path"
-                        if blocked_cmd_prefix == "rm -rf /" and cleaned_command != "rm -rf /":
-                            # Check if it's exactly "rm -rf /" or "rm -rf / "
-                            # This is a simple check; more sophisticated logic might be needed for robust detection
-                            # For example, "rm -rf /usr" is bad, but "rm -rf /tmp/foo" might be okay depending on policy
-                            # The current blacklist aims for very specific dangerous patterns.
-                            if cleaned_command == "rm -rf /" or cleaned_command.startswith("rm -rf / "): # Catches "rm -rf / " and "rm -rf /etc" etc.
-                                print(f"Error: Command '{command_string}' is blacklisted for security reasons (exact match to dangerous pattern).")
-                                return False
-                            # If it's like "rm -rf /some/path" (not root itself), it might be okay, let confirmation handle it.
-                            # This part is tricky; for now, we are strict on "rm -rf /" and "rm -rf /*"
-                        elif blocked_cmd_prefix in ["rm -rf /*", "rm -rf . /", "rm -rf ./*"] and cleaned_command == blocked_cmd_prefix:
-                             print(f"Error: Command '{command_string}' is blacklisted for security reasons (matches dangerous pattern).")
-                             return False
-                        elif blocked_cmd_prefix != "rm -rf /": # For other blacklist items like sudo, mkfs etc.
-                            print(f"Error: Command '{command_string}' starts with a blacklisted prefix '{blocked_cmd_prefix}'.")
-                            return False
-
-                print(f"CONFIRM: About to execute terminal command: '{command_string}'")
-                confirm_input = input("Are you sure? (yes/no): ").strip().lower()
-                if confirm_input == "yes":
-                    result = os_operations.run_command(command_string)
-                    print(f"--- Command Result ---")
-                    if result['stdout']:
-                        print(f"STDOUT:\n{result['stdout']}")
-                    if result['stderr']:
-                        print(f"STDERR:\n{result['stderr']}")
-                    print(f"Return Code: {result['returncode']}")
-                    print(f"Success: {result['success']}")
-                    print(f"----------------------")
-                    if not result['success']:
-                        print(f"Command executed but reported failure (return code {result['returncode']}).")
-                        # This still means the OS action itself "succeeded" in running the command
-                else:
-                    print("Operation cancelled by user.")
-                    return False # Cancelled
-            else:
-                print("Error: 'command_string' not provided for run_command action.")
-                return False
-
-        elif action_name == "list_directory":
-            dir_path = params.get("path")
-            if dir_path:
-                items = os_operations.list_directory(dir_path)
-                print(f"--- Directory Listing: {dir_path} ---")
-                if items:
-                    for item in items:
-                        print(item)
-                else:
-                    print("(Directory is empty)")
-                print(f"-----------------------------------")
-            else:
-                print("Error: 'path' not provided for list_directory action.")
-                return False
-
-        elif action_name == "create_directory":
-            dir_path = params.get("path")
-            if dir_path:
-                os_operations.create_directory(dir_path)
-                print(f"Successfully created directory (or it already existed): {dir_path}")
-            else:
-                print("Error: 'path' not provided for create_directory action.")
-                return False
-
-        elif action_name == "generate_delete_command":
-            del_path = params.get("path")
-            is_recursive = params.get("is_recursive", False)
-            is_forced = params.get("is_forced", False)
-            if del_path:
-                command = os_operations.generate_delete_command(del_path, is_recursive, is_forced)
-                print(f"Generated delete command: {command}")
-                print("IMPORTANT: This command has NOT been executed. ")
-                print("To execute, copy the command and use the 'run_command' action.")
-            else:
-                print("Error: 'path' not provided for generate_delete_command action.")
-                return False
-
-        elif action_name == "find_files":
-            search_path = params.get("search_path")
-            name_pattern = params.get("name_pattern", "*")
-            file_type = params.get("file_type", "any")
-            is_recursive = params.get("is_recursive", True)
-
-            if not search_path:
-                print("Error: 'search_path' not provided for find_files action.")
-                return False
-            try:
-                found_items = os_operations.find_files(search_path, name_pattern, file_type, is_recursive)
-                print(f"--- Items Found in '{search_path}' (Pattern: '{name_pattern}', Type: '{file_type}', Recursive: {is_recursive}) ---")
-                if found_items:
-                    for item in found_items:
-                        print(item)
-                else:
-                    print("(No items found matching criteria)")
-                print("---------------------------------------------------")
-                # This action is considered successful even if no items are found, as long as the search itself didn't error.
-            except os_operations.DirectoryNotFoundError as e: # Catch specific errors from find_files
-                print(f"Error finding files: {e}")
-                return False
-            except os_operations.OperationError as e: # Catch specific errors from find_files
-                print(f"OS Operation Error during find: {e}")
-                return False
-            # Generic OS operation errors and others are caught by the main try-except in this function.
-
-        else:
-            # This case should ideally not be reached if called from main dispatcher
-            print(f"Error: Unknown OS action '{action_name}' in _execute_os_action.")
-            return False
-
-        return True # Assume success if no specific error or return False occurred
-
+        content = os_operations.read_file(filepath)
+        print(f"--- File Content: {filepath} ---\n{content}\n-------------------------------")
+        return True
     except os_operations.FileNotFoundError as e:
         print(f"Error: {e}")
-        return False
-    except os_operations.DirectoryNotFoundError as e:
-        print(f"Error: {e}")
-        return False
-    except os_operations.CommandExecutionError as e:
-        print(f"Command Execution Error: {e.stdout}\n{e.stderr}")
         return False
     except os_operations.OperationError as e:
         print(f"OS Operation Error: {e}")
         return False
     except Exception as e:
-        print(f"An unexpected error occurred during OS action execution: {e}")
+        print(f"An unexpected error occurred during read_file: {e}")
+        return False
+
+def _handle_write_file(params: dict, **kwargs) -> bool:
+    filepath = params.get("filepath")
+    content = params.get("content")
+    mode = params.get("mode", "overwrite").lower()
+
+    if mode not in ["overwrite", "append"]:
+        print(f"Info: Invalid mode '{mode}' provided for write_file. Defaulting to 'overwrite'.")
+        mode = "overwrite"
+
+    if filepath is None:
+        print("Error: 'filepath' not provided for write_file action.")
+        return False
+
+    confirm_action_message = "overwrite" if mode == "overwrite" else "append to"
+    print(f"CONFIRM: About to {confirm_action_message} file: '{filepath}'.")
+    if mode == "overwrite":
+        print("This will overwrite existing content if the file exists or create a new file.")
+    else:  # append
+        print("This will append to the file if it exists or create a new file.")
+
+    try:
+        confirm_input = input("Are you sure? (yes/no): ").strip().lower()
+        if confirm_input == "yes":
+            os_operations.write_file(filepath, content if content is not None else "", mode=mode)
+            print(f"Successfully wrote to file: {filepath} (mode: {mode})")
+            return True
+        else:
+            print("Operation cancelled by user.")
+            return False
+    except os_operations.OperationError as e:
+        print(f"OS Operation Error: {e}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred during write_file: {e}")
+        return False
+
+def _handle_run_command(params: dict, **kwargs) -> bool:
+    command_string = params.get("command_string")
+    if not command_string:
+        print("Error: 'command_string' not provided for run_command action.")
+        return False
+
+    cleaned_command = command_string.strip()
+    for blocked_cmd_prefix in COMMAND_BLACKLIST:
+        if cleaned_command.startswith(blocked_cmd_prefix):
+            if blocked_cmd_prefix == "rm -rf /" and cleaned_command != "rm -rf /":
+                if cleaned_command == "rm -rf /" or cleaned_command.startswith("rm -rf / "):
+                    print(f"Error: Command '{command_string}' is blacklisted (exact match to dangerous pattern).")
+                    return False
+            elif blocked_cmd_prefix in ["rm -rf /*", "rm -rf . /", "rm -rf ./*"] and cleaned_command == blocked_cmd_prefix:
+                 print(f"Error: Command '{command_string}' is blacklisted (matches dangerous pattern).")
+                 return False
+            elif blocked_cmd_prefix != "rm -rf /":
+                print(f"Error: Command '{command_string}' starts with a blacklisted prefix '{blocked_cmd_prefix}'.")
+                return False
+
+    print(f"CONFIRM: About to execute terminal command: '{command_string}'")
+    try:
+        confirm_input = input("Are you sure? (yes/no): ").strip().lower()
+        if confirm_input == "yes":
+            result = os_operations.run_command(command_string)
+            print(f"--- Command Result ---")
+            if result['stdout']: print(f"STDOUT:\n{result['stdout']}")
+            if result['stderr']: print(f"STDERR:\n{result['stderr']}")
+            print(f"Return Code: {result['returncode']}")
+            print(f"Success: {result['success']}")
+            print(f"----------------------")
+            if not result['success']:
+                print(f"Command executed but reported failure (return code {result['returncode']}).")
+            # Command execution itself is considered successful if it ran, regardless of script's success
+            return True
+        else:
+            print("Operation cancelled by user.")
+            return False
+    except os_operations.CommandExecutionError as e: # Error from os_operations.run_command itself
+        print(f"Command Execution Error: {e.message} (stdout: {e.stdout}, stderr: {e.stderr}, code: {e.returncode})")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred during run_command: {e}")
+        return False
+
+def _handle_list_directory(params: dict, **kwargs) -> bool:
+    dir_path = params.get("path")
+    if not dir_path:
+        print("Error: 'path' not provided for list_directory action.")
+        return False
+    try:
+        items = os_operations.list_directory(dir_path)
+        print(f"--- Directory Listing: {dir_path} ---")
+        if items:
+            for item in items: print(item)
+        else:
+            print("(Directory is empty)")
+        print(f"-----------------------------------")
+        return True
+    except os_operations.DirectoryNotFoundError as e:
+        print(f"Error: {e}")
+        return False
+    except os_operations.OperationError as e:
+        print(f"OS Operation Error: {e}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred during list_directory: {e}")
+        return False
+
+def _handle_create_directory(params: dict, **kwargs) -> bool:
+    dir_path = params.get("path")
+    if not dir_path:
+        print("Error: 'path' not provided for create_directory action.")
+        return False
+    try:
+        os_operations.create_directory(dir_path)
+        print(f"Successfully created directory (or it already existed): {dir_path}")
+        return True
+    except os_operations.OperationError as e:
+        print(f"OS Operation Error: {e}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred during create_directory: {e}")
+        return False
+
+def _handle_generate_delete_command(params: dict, **kwargs) -> bool:
+    del_path = params.get("path")
+    is_recursive = params.get("is_recursive", False)
+    is_forced = params.get("is_forced", False)
+    if not del_path:
+        print("Error: 'path' not provided for generate_delete_command action.")
+        return False
+    try:
+        command = os_operations.generate_delete_command(del_path, is_recursive, is_forced)
+        print(f"Generated delete command: {command}")
+        print("IMPORTANT: This command has NOT been executed. ")
+        print("To execute, copy the command and use the 'run_command' action.")
+        return True
+    except os_operations.FileNotFoundError as e: # Specific to generate_delete_command
+        print(f"Error generating delete command: {e}")
+        return False
+    except os_operations.OperationError as e:
+        print(f"OS Operation Error: {e}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred during generate_delete_command: {e}")
+        return False
+
+def _handle_find_files(params: dict, **kwargs) -> bool:
+    search_path = params.get("search_path")
+    name_pattern = params.get("name_pattern", "*")
+    file_type = params.get("file_type", "any")
+    is_recursive = params.get("is_recursive", True)
+
+    if not search_path:
+        print("Error: 'search_path' not provided for find_files action.")
+        return False
+    try:
+        found_items = os_operations.find_files(search_path, name_pattern, file_type, is_recursive)
+        print(f"--- Items Found in '{search_path}' (Pattern: '{name_pattern}', Type: '{file_type}', Recursive: {is_recursive}) ---")
+        if found_items:
+            for item in found_items: print(item)
+        else:
+            print("(No items found matching criteria)")
+        print("---------------------------------------------------")
+        return True
+    except os_operations.DirectoryNotFoundError as e:
+        print(f"Error finding files: {e}")
+        return False
+    except os_operations.OperationError as e:
+        print(f"OS Operation Error during find: {e}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred during find_files: {e}")
+        return False
+
+def _handle_save_quick_action(params: dict, quick_action_manager: QuickActionManager) -> bool:
+    name = params.get("name")
+    actions = params.get("actions")
+    if not name or not actions:
+        print("Error: 'name' and 'actions' are required for save_quick_action.")
+        return False
+    if not quick_action_manager:
+        print("Error: QuickActionManager is not available.")
+        return False
+    try:
+        # Validate structure of actions before saving
+        if not isinstance(actions, list):
+            print("Error: 'actions' parameter must be a list.")
+            return False
+        for i, act_item in enumerate(actions):
+            if not isinstance(act_item, dict) or "action" not in act_item or "parameters" not in act_item:
+                print(f"Error: Action item at index {i} is not correctly formatted. Expected {{'action': 'name', 'parameters': {{...}}}}.")
+                return False
+            # Further validation: check if the action name in the sequence is a known OS action
+            # This requires access to the OS action names, e.g. keys of ACTION_HANDLERS for OS part
+            # For now, basic structural validation.
+            if act_item["action"] not in ACTION_HANDLERS_REGISTER: # Check against actual handlers
+                 # Exclude quick action management actions from being nested directly this way
+                if act_item["action"] in ["save_quick_action", "list_quick_actions", "execute_quick_action", "delete_quick_action"]:
+                    print(f"Error: Quick action management action '{act_item['action']}' cannot be part of a saved quick action sequence.")
+                    return False
+                # We might want a specific list of "savable" OS actions if not all handlers are OS actions
+                # print(f"Warning: Action '{act_item['action']}' in sequence is not a known OS action. It might fail during execution.")
+
+        quick_action_manager.save_action(name, actions)
+        print(f"Quick action '{name}' saved successfully.")
+        return True
+    except QuickActionError as e:
+        print(f"Error saving quick action '{name}': {e}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
         return False
 
 
+def _handle_list_quick_actions(params: dict, quick_action_manager: QuickActionManager) -> bool:
+    if not quick_action_manager:
+        print("Error: QuickActionManager is not available.")
+        return False
+    try:
+        actions = quick_action_manager.list_actions()
+        if not actions:
+            print("No quick actions saved yet.")
+        else:
+            print("--- Saved Quick Actions ---")
+            for name, definition in actions.items():
+                print(f"Name: {name}")
+                print(f"  Actions: {json.dumps(definition['actions'], indent=2)}") # Pretty print actions
+            print("-------------------------")
+        return True
+    except QuickActionError as e:
+        print(f"Error listing quick actions: {e}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return False
+
+def _handle_execute_quick_action(params: dict, quick_action_manager: QuickActionManager) -> bool:
+    name = params.get("name")
+    if not name:
+        print("Error: 'name' not provided for execute_quick_action.")
+        return False
+    if not quick_action_manager:
+        print("Error: QuickActionManager is not available.")
+        return False
+    try:
+        action_sequence = quick_action_manager.get_action(name)
+        if not action_sequence:
+            print(f"Error: Quick action '{name}' not found.")
+            return False
+
+        print(f"--- Executing Quick Action: {name} ---")
+        for i, step_action in enumerate(action_sequence["actions"]):
+            step_action_name = step_action.get("action")
+            step_params = step_action.get("parameters", {})
+            print(f"\nStep {i+1}: Action: {step_action_name}, Parameters: {json.dumps(step_params)}")
+
+            handler = ACTION_HANDLERS_REGISTER.get(step_action_name)
+            if handler:
+                # OS actions might not need quick_action_manager, others might.
+                # The handler signature should accept **kwargs or specific args.
+                # For simplicity, all handlers will accept quick_action_manager, but OS ones won't use it.
+                success = handler(step_params, quick_action_manager=quick_action_manager)
+                if not success:
+                    print(f"Step {i+1} ('{step_action_name}') failed. Aborting quick action '{name}'.")
+                    return False
+            else:
+                print(f"Error: Unknown action '{step_action_name}' in quick action '{name}'. Aborting.")
+                return False
+        print(f"\n--- Quick Action '{name}' completed. ---")
+        return True
+    except QuickActionError as e:
+        print(f"Error executing quick action '{name}': {e}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred during quick action execution: {e}")
+        return False
+
+def _handle_delete_quick_action(params: dict, quick_action_manager: QuickActionManager) -> bool:
+    name = params.get("name")
+    if not name:
+        print("Error: 'name' not provided for delete_quick_action.")
+        return False
+    if not quick_action_manager:
+        print("Error: QuickActionManager is not available.")
+        return False
+    try:
+        quick_action_manager.delete_action(name)
+        print(f"Quick action '{name}' deleted successfully.")
+        return True
+    except QuickActionError as e: # Catches if action doesn't exist
+        print(f"Error deleting quick action '{name}': {e}")
+        return False
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return False
+
+def _handle_clarify(params: dict, **kwargs) -> bool:
+    question = params.get("question", "No question provided.")
+    print(f"Clarification needed: {question}")
+    return True # This action itself is successful in delivering the message
+
+def _handle_error_action(params: dict, **kwargs) -> bool:
+    message = params.get("message", "Unknown error from LLM.")
+    print(f"LLM Error: {message}")
+    return True # This action itself is successful in delivering the message
+
+# --- Dispatch Dictionary ---
+# Needs to be defined globally or passed around if some handlers need to call others via it (esp. execute_quick_action)
+ACTION_HANDLERS_REGISTER = {
+    "read_file": _handle_read_file,
+    "write_file": _handle_write_file,
+    "run_command": _handle_run_command,
+    "list_directory": _handle_list_directory,
+    "create_directory": _handle_create_directory,
+    "generate_delete_command": _handle_generate_delete_command,
+    "find_files": _handle_find_files,
+    "save_quick_action": _handle_save_quick_action,
+    "list_quick_actions": _handle_list_quick_actions,
+    "execute_quick_action": _handle_execute_quick_action,
+    "delete_quick_action": _handle_delete_quick_action,
+    "clarify": _handle_clarify,
+    "error": _handle_error_action,
+}
+
 def main():
+    global ACTION_HANDLERS_REGISTER # Make sure it's accessible if defined globally
     print("Initializing OS Assistant...")
     current_os = get_current_os()
     print(f"Detected OS: {current_os}")
