@@ -3,7 +3,7 @@ import subprocess
 import shutil
 from pathlib import Path
 
-from src.utils import get_current_os
+from os_assist.src.utils import get_current_os
 
 # Define custom exceptions for more specific error handling
 class OperationError(Exception):
@@ -53,26 +53,37 @@ def read_file(filepath: str) -> str:
     except Exception as e:
         raise OperationError(f"An unexpected error occurred while reading file {filepath}: {e}")
 
-def write_file(filepath: str, content: str) -> None:
+def write_file(filepath: str, content: str, mode: str = "overwrite") -> None:
     """
-    Writes content to a file. Creates the file if it doesn't exist,
-    and overwrites it if it does. Parent directories will be created if they don't exist.
+    Writes content to a file. Creates the file if it doesn't exist.
+    Parent directories will be created if they don't exist.
 
     Args:
         filepath: The path to the file.
         content: The content to write to the file.
+        mode: "overwrite" to overwrite the file (default), "append" to append to the file.
 
     Raises:
-        OperationError: For OS-related errors during writing.
+        OperationError: For OS-related errors during writing or if an invalid mode is somehow passed.
     """
     try:
         path = Path(filepath).resolve()
         # Create parent directories if they don't exist
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
+
+        open_mode = ''
+        if mode == "append":
+            open_mode = 'a'
+        elif mode == "overwrite":
+            open_mode = 'w'
+        else:
+            # This case should ideally be handled by the caller, but as a fallback:
+            raise OperationError(f"Invalid mode '{mode}' specified for write_file. Must be 'overwrite' or 'append'.")
+
+        with open(path, open_mode, encoding='utf-8') as f:
             f.write(content)
     except IOError as e:
-        raise OperationError(f"Error writing to file {filepath}: {e}")
+        raise OperationError(f"Error writing to file {filepath} (mode: {mode}): {e}")
     except Exception as e:
         raise OperationError(f"An unexpected error occurred while writing to file {filepath}: {e}")
 

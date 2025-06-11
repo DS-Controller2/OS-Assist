@@ -1,14 +1,24 @@
 import unittest
-from unittest.mock import patch, mock_open, MagicMock, call # Add 'call' here
-import subprocess # Keep this for subprocess.CalledProcessError if you plan to test check=True scenarios, though current run_command uses check=False
+from unittest.mock import patch, mock_open, MagicMock, call
+import subprocess
+import tempfile
+import shutil
 from pathlib import Path
 
 # Adjust import path based on test execution context
-# Assuming tests are run from the project root (os_assist/)
-from src.modules import os_operations
-from src.modules.os_operations import FileNotFoundError, DirectoryNotFoundError, CommandExecutionError, OperationError
+from os_assist.src.modules import os_operations
+from os_assist.src.modules.os_operations import FileNotFoundError, DirectoryNotFoundError, CommandExecutionError, OperationError, write_file
 
 class TestOsOperations(unittest.TestCase):
+
+    def setUp(self):
+        # Create a temporary directory for tests that perform real file I/O
+        self.test_dir = Path(tempfile.mkdtemp(prefix="os_assist_test_"))
+
+    def tearDown(self):
+        # Remove the temporary directory after tests
+        if self.test_dir.exists():
+            shutil.rmtree(self.test_dir)
 
     @patch('src.modules.os_operations.Path.is_file')
     @patch('src.modules.os_operations.open', new_callable=mock_open, read_data='test content')
@@ -387,6 +397,8 @@ class TestOsOperations(unittest.TestCase):
 
     @patch('src.modules.os_operations.Path') # Minimal mock needed as it should fail before globbing
     def test_find_files_invalid_file_type(self, mock_path_constructor):
+        # This test, and others above it, are mock-based and should remain as they are.
+        # New tests for write_file using real I/O will be added below.
         mock_search_path_obj = MagicMock(spec=Path)
         mock_search_path_obj.resolve.return_value = mock_search_path_obj
         mock_search_path_obj.exists.return_value = True
@@ -452,6 +464,107 @@ class TestOsOperations(unittest.TestCase):
         result = os_operations.find_files(search_path='/search/path', name_pattern='[Pp]roject*', file_type='file')
         mock_search_path_obj.rglob.assert_called_with('[Pp]roject*')
         self.assertEqual(sorted(result), sorted(['/search/path/Project.txt', '/search/path/project.txt']))
+
+    # --- New tests for write_file with real file I/O ---
+
+    def test_write_file_overwrite_new_file(self):
+        file_path = self.test_dir / "overwrite_new.txt"
+        content = "Hello Overwrite!"
+        write_file(str(file_path), content) # Default mode is overwrite
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), content)
+
+    def test_write_file_overwrite_existing_file(self):
+        file_path = self.test_dir / "overwrite_existing.txt"
+        initial_content = "Initial content."
+        file_path.write_text(initial_content)
+
+        new_content = "Overwritten content."
+        write_file(str(file_path), new_content, mode="overwrite")
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), new_content)
+
+    def test_write_file_append_new_file(self):
+        file_path = self.test_dir / "append_new.txt"
+        content = "Hello Append!"
+        write_file(str(file_path), content, mode="append")
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), content)
+
+    def test_write_file_append_existing_file(self):
+        file_path = self.test_dir / "append_existing.txt"
+        initial_content = "Initial."
+        file_path.write_text(initial_content)
+
+        append_content = " Appended."
+        write_file(str(file_path), append_content, mode="append")
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), initial_content + append_content)
+
+    def test_write_file_append_multiple_times(self):
+        file_path = self.test_dir / "append_multiple.txt"
+        write_file(str(file_path), "Part1.", mode="append")
+        write_file(str(file_path), "Part2.", mode="append")
+        write_file(str(file_path), "Part3.", mode="append")
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), "Part1.Part2.Part3.")
+
+    def test_write_file_overwrite_creates_parents(self):
+        file_path = self.test_dir / "parents" / "sub" / "overwrite_parents.txt"
+        content = "Parents created for overwrite."
+        write_file(str(file_path), content, mode="overwrite")
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), content)
+        self.assertTrue(file_path.parent.exists())
+        self.assertTrue(file_path.parent.parent.exists())
+
+
+    def test_write_file_append_creates_parents(self):
+        file_path = self.test_dir / "parents_append" / "sub_append" / "append_parents.txt"
+        content = "Parents created for append."
+        write_file(str(file_path), content, mode="append")
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), content)
+        self.assertTrue(file_path.parent.exists())
+        self.assertTrue(file_path.parent.parent.exists())
+
+    def test_write_file_overwrite_empty_content_new_file(self):
+        file_path = self.test_dir / "overwrite_empty_new.txt"
+        write_file(str(file_path), "", mode="overwrite")
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), "")
+
+    def test_write_file_overwrite_empty_content_existing_file(self):
+        file_path = self.test_dir / "overwrite_empty_existing.txt"
+        file_path.write_text("Some pre-existing content.")
+        write_file(str(file_path), "", mode="overwrite")
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), "")
+
+    def test_write_file_append_empty_content_new_file(self):
+        file_path = self.test_dir / "append_empty_new.txt"
+        write_file(str(file_path), "", mode="append")
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), "")
+
+    def test_write_file_append_empty_content_existing_file(self):
+        file_path = self.test_dir / "append_empty_existing.txt"
+        initial_content = "Existing data."
+        file_path.write_text(initial_content)
+        write_file(str(file_path), "", mode="append") # Appending empty string
+        self.assertTrue(file_path.is_file())
+        self.assertEqual(file_path.read_text(), initial_content)
+
+    def test_write_file_invalid_mode_raises_error(self):
+        file_path = self.test_dir / "invalid_mode.txt"
+        with self.assertRaises(OperationError) as context:
+            # This test assumes that os_operations.write_file itself will raise an error for an invalid mode
+            # if the caller (e.g. main.py) doesn't sanitize it first.
+            # The main.py logic *does* sanitize, so this specific error might only be raised
+            # if write_file is called directly with a bad mode.
+            write_file(str(file_path), "content", mode="invalid_mode")
+        self.assertIn("Invalid mode 'invalid_mode' specified for write_file", str(context.exception))
+        self.assertFalse(file_path.exists()) # File should not be created
 
 
 if __name__ == '__main__':
