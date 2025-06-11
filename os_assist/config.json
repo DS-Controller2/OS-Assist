@@ -2,8 +2,8 @@
   "api_providers": {
     "openrouter": {
       "api_key_env_var": "OPENROUTER_API_KEY",
-      "api_key": null,
-      "default_route": "mistralai/mistral-7b-instruct",
+      "api_key": "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",
+      "default_route": "google/gemini-flash-1.5",
       "timeout_seconds": 30
     }
   },

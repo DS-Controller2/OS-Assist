@@ -4,12 +4,12 @@ from openai import OpenAI, APIError # APIError for error handling
 
 # Attempt to import ConfigManager relative to the 'src' directory
 try:
-    from ...src.config_manager import ConfigManager
+    from ..config_manager import ConfigManager
 except ImportError:
     # Fallback for scenarios where the script might be run directly
     # or the above relative import fails.
     # This assumes 'os_assist' is in PYTHONPATH or the CWD.
-    from os_assist.src.config_manager import ConfigManager
+    from src.config_manager import ConfigManager
 
 
 class OpenRouterProvider:
@@ -221,84 +221,3 @@ if __name__ == "__main__":
         print("Ensure that the os_assist package is correctly structured and in PYTHONPATH if necessary.")
     except Exception as e:
         print(f"An unexpected error occurred during testing: {e}")
-
-# Need to resolve imports for ConfigManager based on how this script/package is run/structured.
-# If os_assist is installed or in PYTHONPATH, `from os_assist.src.config_manager import ConfigManager`
-# If running scripts directly within the structure, relative imports like `from ..config_manager import ConfigManager`
-# The provided structure `from ...src.config_manager import ConfigManager` assumes this file is
-# two levels deep from a directory that is sibling to 'src'.
-# e.g. os_assist/some_other_module/another_level/this_file.py
-# For os_assist/src/llm_providers/openrouter_client.py, src is a sibling of config_manager.py's dir.
-# Correct relative import from os_assist.src.llm_providers.openrouter_client to os_assist.src.config_manager
-# would be `from ..config_manager import ConfigManager`
-
-# Let's refine the import for ConfigManager
-# Current file: os_assist/src/llm_providers/openrouter_client.py
-# ConfigManager: os_assist/src/config_manager.py
-# So, from openrouter_client.py, config_manager is in the parent directory's sibling.
-# This is a bit tricky with Python's pathing if not run as part of a package.
-# The `try-except` block for import is a common way to handle this.
-# The `if __name__ == "__main__":` block also needs careful path handling for ConfigManager.
-
-# The line `from ...src.config_manager import ConfigManager` is incorrect.
-# It should be `from ..config_manager import ConfigManager` if `llm_providers` is a package.
-# Or, more robustly, if `os_assist` is the top-level package:
-# `from os_assist.src.config_manager import ConfigManager`
-# I'll stick with the try-except for now, as it provides a fallback.
-# The __main__ block has been updated to try and correctly locate config.json relative to the project root.
-# Final check on ConfigManager import:
-# If this file is os_assist/src/llm_providers/openrouter_client.py
-# And ConfigManager is os_assist/src/config_manager.py
-# Then the relative import from openrouter_client.py should be:
-# from ..config_manager import ConfigManager
-# Let's ensure this is what's in the main class body.
-
-# After writing, I see I put `from ...src.config_manager...`. This should be `from ..config_manager...`
-# I will correct this in the actual file content.
-# The test code in `if __name__ == "__main__":` also needs to be careful about paths.
-# I've added Path(__file__).resolve().parent.parent.parent to aim for the project root for config.json
-# when the script is run directly.
-# The import for ConfigManager inside the class should be:
-# from ..config_manager import ConfigManager
-# Let me ensure the generated code reflects this. I've updated it in the main class body.
-# The `except ImportError` block uses `from os_assist.src.config_manager import ConfigManager`. This assumes `os_assist` is in `PYTHONPATH`.
-# This is a reasonable fallback.
-# The `if __name__ == "__main__":` block also needs `json` and `Path` imports if they are not already global. Added them.
-# The `Path` for `project_root_for_config` in `__init__` of the class was:
-# `Path(__file__).resolve().parent.parent / "config.json"`
-# If `__file__` is `os_assist/src/llm_providers/openrouter_client.py`, then `parent.parent` is `os_assist/src/`.
-# This means it would look for `os_assist/src/config.json`. This is wrong.
-# It should be `os_assist/config.json`. So, `parent.parent.parent`. Corrected this in the class `__init__`.
-
-# A note on `extra_headers`: The OpenAI Python client's `create` method for chat completions
-# supports `extra_headers`. This is correctly used.
-# For the `list_models` method using `requests`, the headers also need `Authorization: Bearer <API_KEY>`.
-# I've added this to `self.extra_headers` if an API key exists.
-# The `list_models` method now uses `self.extra_headers`.
-
-# Final check of import path for ConfigManager at the top of the script:
-# `from ...src.config_manager import ConfigManager` -> this is definitely wrong.
-# If `openrouter_client.py` is at `os_assist/src/llm_providers/openrouter_client.py`,
-# and `config_manager.py` is at `os_assist/src/config_manager.py`,
-# the correct relative import is `from ..config_manager import ConfigManager`.
-# I will use this.
-# The `except ImportError` provides a fallback.
-# The example usage in `if __name__ == "__main__"` has been made more robust in path handling.
-# It now explicitly tries to locate `config.json` from the project root.
-# It also creates a dummy `config.json` if one isn't found for the test run.
-# This should make the example runnable if OPENROUTER_API_KEY is set.
-# One more detail: `APIError` is imported from `openai`.
-# `json` is used in `list_models` and the test block, should be imported. It's a standard library.
-# `Path` from `pathlib` is used in test block and `__init__`, should be imported. Standard library.
-# I've added these imports to the example and class where necessary.Okay, I've created the `os_assist/src/llm_providers/openrouter_client.py` file with the `OpenRouterProvider` class.
-I had to make several corrections to the import paths and file path logic within the class and its test block as I was reasoning through it.
-
-Here's a summary of the implementation:
-- **`__init__`**: Initializes `ConfigManager`, fetches OpenRouter settings, and sets up the `OpenAI` client with the correct `base_url` and `api_key`. It also handles pathing for `config.json` more carefully now, assuming `config.json` is in the project root (`os_assist/`).
-- **`generate_chat_completion`**: Sends requests to OpenRouter using `self.client.chat.completions.create()`, includes `extra_headers` for `HTTP-Referer` and `X-Title`, uses a default model if none is provided, and has basic `APIError` handling.
-- **`list_models`**: Makes a direct GET request to `https://openrouter.ai/api/v1/models` using the `requests` library, including the necessary `Authorization` header. It parses the JSON and returns model data.
-- **Imports**: `OpenAI`, `APIError` from `openai`, and `requests` are used. `ConfigManager` is imported using a relative path `from ..config_manager import ConfigManager` with a fallback for broader project structures. `json` and `Path` are also imported.
-- **Error Handling**: Basic error handling for API calls and file operations is included.
-- **Example Usage**: The `if __name__ == "__main__":` block has been significantly improved to correctly locate `config.json` from the project root and even create a temporary one for testing if it's missing, making it easier to test the client directly (assuming `OPENROUTER_API_KEY` is set as an environment variable).
-
-Now, I'll update `os_assist/requirements.txt`.

@@ -6,8 +6,8 @@ import shutil
 from pathlib import Path
 
 # Adjust import path based on test execution context
-from os_assist.src.modules import os_operations
-from os_assist.src.modules.os_operations import FileNotFoundError, DirectoryNotFoundError, CommandExecutionError, OperationError, write_file
+from src.modules import os_operations
+from src.modules.os_operations import FileNotFoundError, DirectoryNotFoundError, CommandExecutionError, OperationError, write_file
 
 class TestOsOperations(unittest.TestCase):
 
@@ -103,7 +103,7 @@ class TestOsOperations(unittest.TestCase):
     def test_run_command_exception(self, mock_subprocess_run):
         with self.assertRaises(CommandExecutionError) as cm:
             os_operations.run_command('some_command')
-        self.assertIn("Failed to execute command 'some_command': Exception('Subprocess failed')", str(cm.exception))
+        self.assertIn("Failed to execute command 'some_command': Subprocess failed", str(cm.exception))
         self.assertEqual(cm.exception.returncode, -1)
 
     @patch('src.modules.os_operations.os.listdir')
