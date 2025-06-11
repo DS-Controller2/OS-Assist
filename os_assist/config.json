@@ -1,0 +1,13 @@
+{
+  "api_providers": {
+    "openrouter": {
+      "api_key_env_var": "OPENROUTER_API_KEY",
+      "api_key": null,
+      "default_route": "mistralai/mistral-7b-instruct",
+      "timeout_seconds": 30
+    }
+  },
+  "logging": {
+    "level": "INFO"
+  }
+}
