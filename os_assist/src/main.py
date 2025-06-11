@@ -195,12 +195,11 @@ def _handle_run_command(params: dict, **kwargs) -> bool:
             print(f"----------------------")
             if not result['success']:
                 print(f"Command executed but reported failure (return code {result['returncode']}).")
-            # Command execution itself is considered successful if it ran, regardless of script's success
             return True
         else:
             print("Operation cancelled by user.")
             return False
-    except os_operations.CommandExecutionError as e: # Error from os_operations.run_command itself
+    except os_operations.CommandExecutionError as e:
         print(f"Command Execution Error: {e.message} (stdout: {e.stdout}, stderr: {e.stderr}, code: {e.returncode})")
         return False
     except Exception as e:
@@ -260,7 +259,7 @@ def _handle_generate_delete_command(params: dict, **kwargs) -> bool:
         print("IMPORTANT: This command has NOT been executed. ")
         print("To execute, copy the command and use the 'run_command' action.")
         return True
-    except os_operations.FileNotFoundError as e: # Specific to generate_delete_command
+    except os_operations.FileNotFoundError as e:
         print(f"Error generating delete command: {e}")
         return False
     except os_operations.OperationError as e:
@@ -308,7 +307,6 @@ def _handle_save_quick_action(params: dict, quick_action_manager: QuickActionMan
         print("Error: QuickActionManager is not available.")
         return False
     try:
-        # Validate structure of actions before saving
         if not isinstance(actions, list):
             print("Error: 'actions' parameter must be a list.")
             return False
@@ -316,18 +314,11 @@ def _handle_save_quick_action(params: dict, quick_action_manager: QuickActionMan
             if not isinstance(act_item, dict) or "action" not in act_item or "parameters" not in act_item:
                 print(f"Error: Action item at index {i} is not correctly formatted. Expected {{'action': 'name', 'parameters': {{...}}}}.")
                 return False
-            # Further validation: check if the action name in the sequence is a known OS action
-            # This requires access to the OS action names, e.g. keys of ACTION_HANDLERS for OS part
-            # For now, basic structural validation.
-            if act_item["action"] not in ACTION_HANDLERS_REGISTER: # Check against actual handlers
-                 # Exclude quick action management actions from being nested directly this way
+            if act_item["action"] not in ACTION_HANDLERS_REGISTER:
                 if act_item["action"] in ["save_quick_action", "list_quick_actions", "execute_quick_action", "delete_quick_action"]:
                     print(f"Error: Quick action management action '{act_item['action']}' cannot be part of a saved quick action sequence.")
                     return False
-                # We might want a specific list of "savable" OS actions if not all handlers are OS actions
-                # print(f"Warning: Action '{act_item['action']}' in sequence is not a known OS action. It might fail during execution.")
-
-        quick_action_manager.save_action(name, actions)
+        quick_action_manager.add_action(name, actions) # Use add_action from QuickActionManager
         print(f"Quick action '{name}' saved successfully.")
         return True
     except QuickActionError as e:
@@ -336,7 +327,6 @@ def _handle_save_quick_action(params: dict, quick_action_manager: QuickActionMan
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return False
-
 
 def _handle_list_quick_actions(params: dict, quick_action_manager: QuickActionManager) -> bool:
     if not quick_action_manager:
@@ -348,9 +338,14 @@ def _handle_list_quick_actions(params: dict, quick_action_manager: QuickActionMa
             print("No quick actions saved yet.")
         else:
             print("--- Saved Quick Actions ---")
-            for name, definition in actions.items():
+            for name, definition in actions.items(): # Assuming list_actions returns a dict
                 print(f"Name: {name}")
-                print(f"  Actions: {json.dumps(definition['actions'], indent=2)}") # Pretty print actions
+                # Ensure definition is a dict and has 'actions' key before accessing
+                if isinstance(definition, dict) and "actions" in definition:
+                    print(f"  Actions: {json.dumps(definition['actions'], indent=2)}")
+                else:
+                    # Handle older format if necessary or print a warning/error
+                    print(f"  Definition for '{name}' is not in the expected format: {definition}")
             print("-------------------------")
         return True
     except QuickActionError as e:
@@ -369,22 +364,21 @@ def _handle_execute_quick_action(params: dict, quick_action_manager: QuickAction
         print("Error: QuickActionManager is not available.")
         return False
     try:
-        action_sequence = quick_action_manager.get_action(name)
-        if not action_sequence:
-            print(f"Error: Quick action '{name}' not found.")
+        action_data = quick_action_manager.get_action(name) # Expecting a list of actions
+        if not action_data: # Or if it's not in the new dict format, this will be None
+            print(f"Error: Quick action '{name}' not found or in an invalid format.")
             return False
 
+        action_sequence_list = action_data # Assuming get_action returns the list directly
+
         print(f"--- Executing Quick Action: {name} ---")
-        for i, step_action in enumerate(action_sequence["actions"]):
+        for i, step_action in enumerate(action_sequence_list):
             step_action_name = step_action.get("action")
             step_params = step_action.get("parameters", {})
             print(f"\nStep {i+1}: Action: {step_action_name}, Parameters: {json.dumps(step_params)}")
 
             handler = ACTION_HANDLERS_REGISTER.get(step_action_name)
             if handler:
-                # OS actions might not need quick_action_manager, others might.
-                # The handler signature should accept **kwargs or specific args.
-                # For simplicity, all handlers will accept quick_action_manager, but OS ones won't use it.
                 success = handler(step_params, quick_action_manager=quick_action_manager)
                 if not success:
                     print(f"Step {i+1} ('{step_action_name}') failed. Aborting quick action '{name}'.")
@@ -410,11 +404,11 @@ def _handle_delete_quick_action(params: dict, quick_action_manager: QuickActionM
         print("Error: QuickActionManager is not available.")
         return False
     try:
-        quick_action_manager.delete_action(name)
-        print(f"Quick action '{name}' deleted successfully.")
+        quick_action_manager.remove_action(name) # Use remove_action
+        # remove_action already prints success, or raises error if not found
         return True
-    except QuickActionError as e: # Catches if action doesn't exist
-        print(f"Error deleting quick action '{name}': {e}")
+    except QuickActionError as e:
+        print(f"Error deleting quick action '{name}': {e}") # Error already printed by remove_action if not found
         return False
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
@@ -423,15 +417,13 @@ def _handle_delete_quick_action(params: dict, quick_action_manager: QuickActionM
 def _handle_clarify(params: dict, **kwargs) -> bool:
     question = params.get("question", "No question provided.")
     print(f"Clarification needed: {question}")
-    return True # This action itself is successful in delivering the message
+    return True
 
 def _handle_error_action(params: dict, **kwargs) -> bool:
     message = params.get("message", "Unknown error from LLM.")
     print(f"LLM Error: {message}")
-    return True # This action itself is successful in delivering the message
+    return True
 
-# --- Dispatch Dictionary ---
-# Needs to be defined globally or passed around if some handlers need to call others via it (esp. execute_quick_action)
 ACTION_HANDLERS_REGISTER = {
     "read_file": _handle_read_file,
     "write_file": _handle_write_file,
@@ -449,15 +441,12 @@ ACTION_HANDLERS_REGISTER = {
 }
 
 def main():
-    global ACTION_HANDLERS_REGISTER # Make sure it's accessible if defined globally
+    global ACTION_HANDLERS_REGISTER
     print("Initializing OS Assistant...")
     current_os = get_current_os()
     print(f"Detected OS: {current_os}")
 
-    # Initialize ConfigManager
     config_manager = ConfigManager()
-
-    # Initialize OpenRouterProvider
     llm_provider = OpenRouterProvider(config_manager=config_manager)
 
     if not llm_provider.api_key:
@@ -465,7 +454,6 @@ def main():
         print("Refer to os_assist/README.md for setup instructions.")
         return
 
-    # Initialize QuickActionManager
     try:
         quick_action_manager = QuickActionManager()
         print("QuickActionManager initialized.")
@@ -474,7 +462,6 @@ def main():
         quick_action_manager = None
 
     print("OS Assistant ready. Type 'exit' or 'quit' to end.")
-
     print("Enter your command:")
 
     while True:
@@ -500,14 +487,39 @@ def main():
                 print("Error: Received no response from LLM.")
                 continue
 
-            print(f"Raw LLM response: {llm_response_str}") # For debugging
+            print(f"Raw LLM response: {llm_response_str}")
 
             try:
                 parsed_action = parse_llm_response(llm_response_str)
-                print(f"Parsed action: {json.dumps(parsed_action, indent=2)}") # For debugging
+                print(f"Parsed action: {json.dumps(parsed_action, indent=2)}")
             except LLMResponseParseError as e:
                 print(f"Error parsing LLM response: {e}")
                 continue
+            # Removed the redundant `except Exception` here that was added in a previous subtask,
+            # as the main loop already has a generic Exception handler.
 
             action_name = parsed_action.get("action")
             params = parsed_action.get("parameters", {})
+
+            handler = ACTION_HANDLERS_REGISTER.get(action_name)
+            if handler:
+                # Pass quick_action_manager to handlers that might need it
+                if action_name in ["save_quick_action", "list_quick_actions", "execute_quick_action", "delete_quick_action"]:
+                    if not handler(params, quick_action_manager=quick_action_manager):
+                        print(f"Action '{action_name}' reported failure.")
+                else: # OS operations and others
+                    if not handler(params): # Assuming OS ops don't need QAM directly
+                        print(f"Action '{action_name}' reported failure.")
+            else:
+                print(f"Error: Unknown action '{action_name}' received from LLM.")
+
+        except KeyboardInterrupt:
+            print("\nUser interrupted. Exiting OS Assistant.")
+            break
+        except Exception as e:
+            print(f"An unexpected error occurred in the main loop: {e}")
+            print("Please try another command or type 'exit' to quit.")
+            continue
+
+if __name__ == "__main__":
+    main()

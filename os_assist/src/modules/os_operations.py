@@ -3,7 +3,7 @@ import subprocess
 import shutil
 from pathlib import Path
 
-from os_assist.src.utils import get_current_os
+from src.utils import get_current_os
 
 # Define custom exceptions for more specific error handling
 class OperationError(Exception):

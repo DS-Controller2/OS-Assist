@@ -72,7 +72,7 @@ if __name__ == '__main__':
 
     invalid_responses = [
         ("not a json string", LLMResponseParseError),
-        ("{'action': 'read_file', 'parameters': {'filepath': '/path/to/file.txt'}}', LLMResponseParseError), # Single quotes
+        ("{'action': 'read_file', 'parameters': {'filepath': '/path/to/file.txt'}}", LLMResponseParseError), # Single quotes
         ('{"parameters": {"filepath": "/path/to/file.txt"}}', LLMResponseParseError), # Missing action
         ('{"action": "read_file", "parameters": "not a dict"}', LLMResponseParseError), # Invalid parameters type
         ('[]', LLMResponseParseError), # Not a dictionary
