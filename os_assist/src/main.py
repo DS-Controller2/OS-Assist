@@ -13,6 +13,7 @@ from src.llm_providers.openrouter_client import OpenRouterProvider
 from src.modules import os_operations
 from src.llm_parser import parse_llm_response, LLMResponseParseError
 from src.modules.quick_action_manager import QuickActionManager, QuickActionError
+from src.utils import get_current_os
 
 # Define command blacklist
 COMMAND_BLACKLIST = [
@@ -71,8 +72,17 @@ Available Quick Actions management (these manage sequences of the OS actions abo
 10. `delete_quick_action`: Deletes a named quick action.
     *   `parameters`: `{"name": "name_of_quick_action_to_delete"}`
 
+11. `find_files`: Finds files or directories matching a pattern.
+    *   `parameters`:
+        *   `search_path` (string, required): Directory to search in.
+        *   `name_pattern` (string, optional, default: "*"): Glob pattern for name (e.g., "*.txt").
+        *   `file_type` (string, optional, default: "any"): Type to find ('file', 'directory', 'any').
+        *   `is_recursive` (boolean, optional, default: true): Whether to search subdirectories.
+    *   Example: `{"action": "find_files", "parameters": {"search_path": "/tmp", "name_pattern": "*.log", "file_type": "file"}}`
+
 **Important Instructions:**
 *   Always respond with a single JSON object. No explanatory text outside the JSON.
+*   The current detected operating system is [OS_NAME_HERE]. Please tailor system commands for `run_command` accordingly if they are OS-specific.
 *   If a user asks to save a quick action, ensure the 'actions' parameter is a list of valid OS action objects.
 *   For `generate_delete_command`, the user should be informed the command is not run automatically.
 *   If ambiguous, ask for clarification: `{"action": "clarify", "parameters": {"question": "Your question here?"}}`
@@ -210,6 +220,33 @@ def _execute_os_action(action_name: str, params: dict) -> bool:
                 print("Error: 'path' not provided for generate_delete_command action.")
                 return False
 
+        elif action_name == "find_files":
+            search_path = params.get("search_path")
+            name_pattern = params.get("name_pattern", "*")
+            file_type = params.get("file_type", "any")
+            is_recursive = params.get("is_recursive", True)
+
+            if not search_path:
+                print("Error: 'search_path' not provided for find_files action.")
+                return False
+            try:
+                found_items = os_operations.find_files(search_path, name_pattern, file_type, is_recursive)
+                print(f"--- Items Found in '{search_path}' (Pattern: '{name_pattern}', Type: '{file_type}', Recursive: {is_recursive}) ---")
+                if found_items:
+                    for item in found_items:
+                        print(item)
+                else:
+                    print("(No items found matching criteria)")
+                print("---------------------------------------------------")
+                # This action is considered successful even if no items are found, as long as the search itself didn't error.
+            except os_operations.DirectoryNotFoundError as e: # Catch specific errors from find_files
+                print(f"Error finding files: {e}")
+                return False
+            except os_operations.OperationError as e: # Catch specific errors from find_files
+                print(f"OS Operation Error during find: {e}")
+                return False
+            # Generic OS operation errors and others are caught by the main try-except in this function.
+
         else:
             # This case should ideally not be reached if called from main dispatcher
             print(f"Error: Unknown OS action '{action_name}' in _execute_os_action.")
@@ -236,6 +273,8 @@ def _execute_os_action(action_name: str, params: dict) -> bool:
 
 def main():
     print("Initializing OS Assistant...")
+    current_os = get_current_os()
+    print(f"Detected OS: {current_os}")
 
     # Initialize ConfigManager
     config_manager = ConfigManager()
@@ -254,8 +293,7 @@ def main():
         print("QuickActionManager initialized.")
     except QuickActionError as e:
         print(f"Error initializing QuickActionManager: {e}. Quick actions may not be available.")
-        # Decide if this is fatal. For now, let it run without quick actions.
-        quick_action_manager = None # Ensure it's defined
+        quick_action_manager = None
 
     print("OS Assistant ready. Type 'exit' or 'quit' to end.")
 
@@ -272,8 +310,9 @@ def main():
 
             print("\nThinking...")
 
+            active_system_prompt = SYSTEM_PROMPT.replace("[OS_NAME_HERE]", current_os)
             messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": active_system_prompt},
                 {"role": "user", "content": user_input}
             ]
 
