@@ -3,6 +3,8 @@ import subprocess
 import shutil
 from pathlib import Path
 
+from src.utils import get_current_os
+
 # Define custom exceptions for more specific error handling
 class OperationError(Exception):
     """Base class for errors in this module."""
@@ -188,25 +190,104 @@ def generate_delete_command(path_str: str, is_recursive: bool = False, is_forced
     if not path.exists():
         raise FileNotFoundError(f"Cannot generate delete command: Path '{path_str}' does not exist.")
 
-    if path.is_dir() and not is_recursive:
-        try:
-            if list(path.iterdir()): # Check if directory is empty
-                 raise OperationError(
-                    f"Cannot generate non-recursive delete command for non-empty directory '{path_str}'. "
-                    "Use is_recursive=True for recursive deletion."
-                )
-        except OSError as e: # Handle cases where path.iterdir() might fail (e.g. permissions)
-            raise OperationError(f"Could not determine if directory '{path_str}' is empty: {e}")
+    current_os = get_current_os()
 
-    command_parts = ["rm"]
-    if is_forced:
-        command_parts.append("-f")
-    if path.is_dir() and is_recursive:
-        command_parts.append("-r")
+    if current_os == "windows":
+        if path.is_dir():
+            if not is_recursive:
+                try:
+                    if list(path.iterdir()): # Check if directory is empty
+                        raise OperationError(
+                            f"Cannot generate non-recursive delete command for non-empty directory '{path_str}'. "
+                            "Use is_recursive=True for recursive deletion."
+                        )
+                    # For an empty directory on Windows
+                    return f'rmdir "{path}"'
+                except OSError as e:
+                    raise OperationError(f"Could not determine if directory '{path_str}' is empty: {e}")
+            else: # Recursive directory deletion for Windows
+                command_parts = ["rmdir"]
+                if is_forced: # /q implies quiet, similar to force by not asking for confirmation
+                    command_parts.append("/q")
+                command_parts.append("/s")
+                command_parts.append(f'"{path}"')
+                return " ".join(command_parts)
+        else: # File deletion for Windows
+            # 'del' command on Windows doesn't have a recursive flag.
+            # is_forced for 'del' might map to /f, but /f forces read-only files to be deleted.
+            # For simplicity, we'll use a basic del. If needed, /f could be added.
+            command_parts = ["del"]
+            if is_forced: # Optional: add /f if precise "force" for read-only is desired
+                 pass # Example: command_parts.append("/f")
+            command_parts.append(f'"{path}"')
+            return " ".join(command_parts)
+    else: # Linux, macOS, unknown
+        if path.is_dir() and not is_recursive:
+            try:
+                if list(path.iterdir()): # Check if directory is empty
+                    raise OperationError(
+                        f"Cannot generate non-recursive delete command for non-empty directory '{path_str}'. "
+                        "Use is_recursive=True for recursive deletion."
+                    )
+            except OSError as e: # Handle cases where path.iterdir() might fail (e.g. permissions)
+                raise OperationError(f"Could not determine if directory '{path_str}' is empty: {e}")
 
-    command_parts.append(f'"{path}"') # Quote the path to handle spaces
+        command_parts = ["rm"]
+        if is_forced:
+            command_parts.append("-f")
+        if path.is_dir() and is_recursive:
+            command_parts.append("-r")
 
-    return " ".join(command_parts)
+        command_parts.append(f'"{path}"') # Quote the path to handle spaces
+        return " ".join(command_parts)
+
+
+def find_files(search_path: str, name_pattern: str = "*", file_type: str = "any", is_recursive: bool = True) -> list[str]:
+    """
+    Finds files or directories matching a pattern within a given path.
+
+    Args:
+        search_path: The directory path to start searching from.
+        name_pattern: A glob-style pattern for the filename (e.g., "*.txt", "report_*.*"). Defaults to "*".
+        file_type: Specifies what to find: 'file', 'directory', or 'any'. Defaults to 'any'.
+        is_recursive: Whether to search subdirectories. Defaults to True.
+
+    Returns:
+        A sorted list of absolute string paths of found items.
+
+    Raises:
+        DirectoryNotFoundError: If search_path does not exist or is not a directory.
+        OperationError: For other OS-related errors or invalid file_type.
+    """
+    base_path = Path(search_path).resolve()
+
+    if not base_path.exists():
+        raise DirectoryNotFoundError(f"Search path '{search_path}' does not exist.")
+    if not base_path.is_dir():
+        raise DirectoryNotFoundError(f"Search path '{search_path}' is not a directory.")
+
+    if file_type not in ["file", "directory", "any"]:
+        raise OperationError(f"Invalid file_type '{file_type}'. Must be 'file', 'directory', or 'any'.")
+
+    results = []
+    try:
+        if is_recursive:
+            glob_iterator = base_path.rglob(name_pattern)
+        else:
+            glob_iterator = base_path.glob(name_pattern)
+
+        for path_object in glob_iterator:
+            if file_type == "file" and path_object.is_file():
+                results.append(str(path_object.resolve()))
+            elif file_type == "directory" and path_object.is_dir():
+                results.append(str(path_object.resolve()))
+            elif file_type == "any":
+                results.append(str(path_object.resolve()))
+
+    except Exception as e:
+        raise OperationError(f"Error during find operation in '{search_path}': {e}")
+
+    return sorted(results)
 
 if __name__ == '__main__':
     # Example Usage and Basic Tests
